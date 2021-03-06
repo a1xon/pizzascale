@@ -13,12 +13,13 @@ HX711 loadcell;
 const int LOADCELL_DOUT_PIN = 13;
 const int LOADCELL_SCK_PIN = 12;
 const int SWITCH = 3;
+
 unsigned long lastButtonPress = 0;
 
 const long LOADCELL_OFFSET = 50682624;
 const long LOADCELL_DIVIDER = 5895655;
 
-int weight = 0; // scroll this text from right to left
+int weight = 0;
 int aimWeight = 0;
 int cupWeight = 0;
 const char *gut = "Container";
@@ -33,71 +34,73 @@ int pizzaBlank = 300;
 /// how many, how heavy?
 int amountPizzasTotal = 0;
 int pizzaBlankGramm = 0;
-
+int currentWeight = 0;
 int measurmentStep = -1;
 
-void setup(void)
-{
+void setup(void) {
   Serial.begin(115200);
   u8g2.begin();
-  u8g2.setFontMode(0); // enable transparent mode, which is faster
+  // enable transparent mode, which is faster
+  u8g2.setFontMode(0); 
 
   pinMode(SWITCH, INPUT_PULLUP);
   loadcell.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   loadcell.set_scale(219);
-  if (myTimer.isTimeReached())
-  { //check if execution time has been reached
+  /// wait for timer to tare scale
+  if (myTimer.isTimeReached()) {
     loadcell.tare();
   }
-  /// loadcell.set_offset();
 }
 
-void loop(void)
-{
+void loop(void) {
   u8g2_uint_t x;
+
+  currentWeight = getWeight();
+  /// get progress for weight
 
   int btnState = digitalRead(SWITCH);
 
-  if (btnState == LOW && millis() - lastButtonPress > 1000)
-  {
-    if (measurmentStep == -1)
-    {
+  /// debounced click
+  if (btnState == LOW && millis() - lastButtonPress > 500) {
+    if (measurmentStep == -1) {
       cupWeight = getWeight();
+    } else {
+      /// calcutalte pizza after each weighing step
+      pizzaMeasures[measurmentStep] = currentWeight;
+      calculatePizza();
     }
-    else
-    {
-      pizzaMeasures[measurmentStep++] = getWeight();
-      gut = pizzaIngString[measurmentStep];
-    }
+    measurmentStep++;
+    gut = pizzaIngString[measurmentStep];
     lastButtonPress = millis();
   }
-  ////
-  calculatePizza()
+  
+  /// calculate pizza live when measuring flour
+  if (measurmentStep == 0) {
+    calculatePizza();
+  } else if (measurmentStep >= 1) {
+    /// calcutlate progress when measuring salt and water
+    progress = currentWeight / (pizzaMeasures[0] * pizzaIngRelative[measurmentStep]);
+  }
 
   u8g2.firstPage();
-  do
-  {
+  do {
     drawScreen(u8g2);
   } while (u8g2.nextPage());
   // start over again
 }
 
-int calculatePizza()
-{
-  float wheat = measurmentStep == 0 ? (float)getWeight() : (float)pizzaMeasures[0];
+int calculatePizza() {
+  float wheat = measurmentStep == 0 ? (float)currentWeight : (float)pizzaMeasures[0];
   float salt = pizzaMeasures[1] != 0 ? (float)pizzaMeasures[1] : (wheat * pizzaIngRelative[1]);
   float water = pizzaMeasures[2] != 0 ? (float)pizzaMeasures[2] : (wheat * pizzaIngRelative[2]);
   dough = (int)round(wheat + salt + water);
 
-  if (dough != 0)
-  {
-    for (int amountPizza = 1; amountPizza < 20; amountPizza++)
-    {
-      if ((dough / amountPizza) >= 250 && (dough / amountPizza) <= 325)
-      {
+  if (dough != 0) {
+    for (int amountPizza = 1; amountPizza < 20; amountPizza++) {
+      if ((dough / amountPizza) >= 250 && (dough / amountPizza) <= 325) {
         pizzaBlankGramm = (int)round(dough / amountPizza);
         amountPizzasTotal = amountPizza;
-        return 0;
+        return amountPizza;
       }
     }
   }
@@ -108,15 +111,14 @@ int calculatePizza()
 int getWeight()
 {
   float weightFloat = loadcell.get_units(5);
-
+  /// substract cup container from weight
   int weight = (int)round(weightFloat) - cupWeight;
-  for (int i; i < 3; i++)
-  {
-    weight += pizzaMeasures[i];
+  
+  for (int i = 0; i < 3; i++) {
+    weight -= pizzaMeasures[i];
   }
 
-  if (weight < 0)
-  {
+  if (weight < 0) {
     weight = 0;
   }
 
@@ -129,22 +131,33 @@ void progressbar(U8G2 u8g2, int x, int y, int w, int h, float value)
   u8g2.drawBox(x + 2, y + 2, (w - 4) * value, h - 3);
 }
 
-void drawScreen(U8G2 u8g2)
-{
+void drawScreen(U8G2 u8g2) {
   u8g2.setFont(u8g2_font_profont29_mr); // set the target font
-  //u8g2.drawUTF8(0, 22, getWeight(u8g2));     // draw the scolling text
   u8g2.setCursor(0, 22);
-  u8g2.print(u8x8_u16toa(getWeight(), 4));
-  u8g2.setFont(u8g2_font_profont12_mr); // draw the current pixel width
+  if (measurmentStep <= 0) {
+      u8g2.print(u8x8_u16toa(currentWeight, 4));
+  } else {
+      u8g2.print(u8x8_u16toa( (pizzaMeasures[0] * pizzaIngRelative[measurmentStep]) - currentWeight, 4));
+  }
+
+  
+  u8g2.setFont(u8g2_font_profont12_mr);
+  u8g2.drawUTF8(65, 20, "g");
+  
+  /// gut
   u8g2.drawUTF8(0, 32, gut);
-  u8g2.setFont(u8g2_font_profont10_tf);
 
-  u8g2.setCursor(82, 14);
-  u8g2.print(amountPizzasTotal);
-  u8g2.drawUTF8(90, 14, "Pizzen");
-  u8g2.drawUTF8(82, 22, "á");
-  u8g2.setCursor(88, 22);
-  u8g2.print(pizzaBlankGramm);
+  if (measurmentStep >= 0) {
+    u8g2.setFont(u8g2_font_profont10_tf);
+    u8g2.setCursor(82, 14);
+    u8g2.print(amountPizzasTotal);
+    u8g2.drawUTF8(90, 14, "Pizzen");
+    u8g2.drawUTF8(82, 22, "á");
+    u8g2.setCursor(88, 22);
+    u8g2.print(pizzaBlankGramm);
+  }
 
-  progressbar(u8g2, 40, 27, 85, 5, progress);
+  if (measurmentStep >= 1) {
+    progressbar(u8g2, 40, 27, 85, 5, progress);
+  }
 }
